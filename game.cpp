@@ -1,53 +1,21 @@
-/*
-============================================================================
-Name        : game.cpp
-Author      : ZF Song
-Version     :
-Copyright   : ZF Song
-Description : Game control. The controller has actions of addDealer, addPlayer, 
-              start game, take turns from player to player and check who wins.
-============================================================================
-*/
-/* Config Includes *****************************************************/
 #include "game.h"
+#include "q-learning.h"
+#include "actionSelection.h"
 #include<string>
-/* End Config Includes *************************************************/
 
-/* Public Global Variables *********************************************/
 vector<Dealer*>dealerSet;
 vector<Player*>playerSet;
-/* End Public Global Variables *****************************************/
 
-/* Begin Function:addDealer *********************************************
-Description : Add a Dealer to the game.
-Input       : None.
-Output      : None.
-Return      : None.
-************************************************************************/
 void addDealer() {
 	Dealer* d = new Dealer();
 	dealerSet.push_back(d);
 }
-/* End Function:addDealer **********************************************/
 
-/* Begin Function:addPlayer *********************************************
-Description : Add a Player to the game.
-Input       : None.
-Output      : None.
-Return      : None.
-************************************************************************/
 void addPlayer() {
 	Player* d = new Player();
 	playerSet.push_back(d);
 }
-/* End Function:addPlayer ***********************************************/
 
-/* Begin Function:start **************************************************
-Description : Start game, config deck and players.
-Input       : None.
-Output      : None.
-Return      : None.
-*************************************************************************/
 void start() {
 	cout << "******Game Start!******"<<endl;
 	init_deck();
@@ -58,14 +26,7 @@ void start() {
 	d->setPlayerSet(playerSet);
 	d->Distribute();
 }
-/* End Function:start ****************************************************/
 
-/* Begin Function:checkWin ************************************************
-Description : Check who wins in a round.
-Input       : None.
-Output      : None.
-Return      : None.
-**************************************************************************/
 void checkWin() {
 	cout << "******Check Win******" << endl;
 	Dealer* d = dealerSet.front();
@@ -116,40 +77,74 @@ void checkWin() {
 	}
 		cout << res << endl;
 }
-/* End Function:checkWin ****************************************************/
+void findStateActionPair(std::vector<StateActionPair> qValues, StateActionPair &stateActionPair,  int &index, int playerCardValue, int dealerCardValue, Action action)
+{
 
-/* Begin Function:turn *******************************************************
-Description : Take turns, each non-blackjack player can choose to Hit or Stand,
-              if hand>21, Bust! 
-			  After all players' turn end, Dealer must Hit until hand>17,
-			  if hand>21, Bust, else, checkWin().
-Input       : None.
-Output      : None.
-Return      : None.
-******************************************************************************/
+    for (size_t i = 0; i < qValues.size(); ++i)
+    {
+        if (playerCardValue == qValues[i].playerCardValue && dealerCardValue == qValues[i].dealerCardValue && action == qValues[i].action)
+        {
+            stateActionPair = qValues[i];
+            index = i;
+        }
+        else //For debug purposes
+        {
+            std::cout << "Error, this should not happen. There is no matching entry in the lookup table \n";
+            std::cout << "DEBUG playercardValue: " << playerCardValue << "\nDEBUG dealercardValue: " << dealerCardValue
+                      << "\nDEBUG action: " << action;
+        }
+    }
+}
+
+StateActionPair findStateActionPairWithMaxAction(std::vector<StateActionPair> qValues, int playerCardValue, int dealerCardValue)
+{
+    StateActionPair stateActionPair;
+    double maxQValue = 0;
+    for (size_t i = 0; i < qValues.size(); ++i)
+    {
+        if (playerCardValue == qValues[i].playerCardValue && dealerCardValue == qValues[i].dealerCardValue)
+            if (qValues[i].qValue > maxQValue)
+            {
+                maxQValue = qValues[i].qValue;
+                stateActionPair = qValues[i];
+            }
+    }
+    return stateActionPair;
+}
 void turn() {
 	Dealer* d = dealerSet.front();
 	int player = 0;
+    std::vector<StateActionPair> qValues = initializeQValues();
+
 	for (auto p : d->getPlayerSet()) {
 		player++;
 		cout << endl;
 		cout << "******Player" << player << "'s move*******" << endl;
 		cout << "Player" << player << "'s Hand" << endl;
 		int playerHand = p->CheckHand();
-		char c = ' ';
-		while (c != 'S' && playerHand < 21) {
-			c = p->choice();
-			if (c == 'H') 
-				p->Hit();
-			else if (c == 'S') 
-				/*Stand, do nothing*/;
-			else 
-				cout << "Invalid input, try again." << endl;
-			playerHand = p->CheckHand();
-		}
+        int dealerFirstCard = d->showFirstCard();
+
+        Action action = selectActionEpsilonGreedy(qValues, playerHand, dealerFirstCard);
+        StateActionPair currentStateActionPair;
+        int index;
+        findStateActionPair(qValues, currentStateActionPair, index, playerHand, dealerFirstCard, action);
+
+        while (action != stand && playerHand < 21)
+        {
+            if (action == hit)
+                p->Hit();
+            playerHand = p->CheckHand();
+        }
+        StateActionPair nextStateActionPair = findStateActionPairWithMaxAction(qValues, playerHand, dealerFirstCard);
+
+        if (playerHand < 21)
+            qValues = updateQValue(qValues, currentStateActionPair, nextStateActionPair, 0, index);
+        else if (playerHand == 21)
+            qValues = updateQValue(qValues, currentStateActionPair, nextStateActionPair, 1, index);
+        else
+            qValues = updateQValue(qValues, currentStateActionPair, nextStateActionPair, -1, index);
 	}
 	cout << "******Turns end!******" << endl;
 	while (d->CheckHand() < 17) 
 		d->Hit();
 }
-/* End Function:turn ****************************************************/
